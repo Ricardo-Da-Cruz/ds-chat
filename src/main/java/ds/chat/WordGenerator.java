@@ -1,7 +1,6 @@
 package ds.chat;
 
 import ds.poisson.PoissonProcess;
-import org.javatuples.Pair;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -14,14 +13,15 @@ public class WordGenerator implements Runnable{
 
     private final String[] words = new String[10000];
 
-    private final TreeMap<Integer, Pair<String,Integer>> list;
+    private final TreeMap<ClockWithIP, MessageData> list;
 
     private final FileWriter file;
 
-    private final Lamport clock = new Lamport();
+    private final Lamport clock;
 
-    WordGenerator(TreeMap<Integer, Pair<String,Integer>> list, FileWriter file,Lamport clock) {
+    WordGenerator(TreeMap<ClockWithIP, MessageData> list, FileWriter file,Lamport clock) {
         try {
+            this.clock = clock;
             this.file = file;
             this.list = list;
             Scanner wordsFile = new Scanner(new File("words.txt"));
@@ -47,14 +47,14 @@ public class WordGenerator implements Runnable{
             try{
                 Thread.sleep((int)t);
 
-                String temp = words[(int) (Math.random() * words.length)] + " " + InetAddress.getLocalHost();
+                String word = words[(int) (Math.random() * words.length)] + " " + InetAddress.getLocalHost();
+                MessageData value = new MessageData(word);
+
                 synchronized (list){
-                    list.put(clock.tick(), new Pair<>(temp,0));
+                    ClockWithIP key = new ClockWithIP(clock.tick(), InetAddress.getLocalHost().getAddress());
+                    list.put(key, value);
                 }
 
-                file.write("\n" + temp);
-                file.flush();
-                System.out.println("added word:" + words[(int) (Math.random() * words.length)] + "\n");
             } catch (InterruptedException | IOException e) {
                 System.out.println("thread interrupted");
                 e.printStackTrace(System.out);
