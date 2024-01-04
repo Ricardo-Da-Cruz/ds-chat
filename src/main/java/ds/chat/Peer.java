@@ -1,5 +1,7 @@
 package ds.chat;
 
+import ds.poisson.PoissonProcess;
+
 import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -24,6 +26,8 @@ public class Peer implements Runnable {
     private final FileWriter file;
 
     private final Lamport clock = new Lamport();
+
+    private final String[] wordsDic = new String[10000];
 
     class Connection implements Runnable {
         private final Socket socket;
@@ -93,18 +97,59 @@ public class Peer implements Runnable {
         file = new FileWriter("log.txt");
         peers = addresses;
 
-        new Thread(new WordGenerator(messages,file,clock)).start();
+        new Thread(() -> {
+            while (true){
+                try {
+                    Socket client = server.accept();
+                    new Thread(new Connection(client)).start();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
         new Thread(this).start();
     }
 
     @Override
     public void run() {
-        while (true){
-            try {
-                Socket client = server.accept();
-                new Thread(new Connection(client)).start();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+        try {
+            Scanner wordsFile = new Scanner(new File("words.txt"));
+            int numWords = 0;
+            while (wordsFile.hasNext()) {
+                wordsDic[numWords] = wordsFile.nextLine();
+                numWords++;
+            }
+
+            System.out.println("Loaded " + numWords + " words.\n");
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+
+        PoissonProcess pp = new PoissonProcess(4, new Random((int) (Math.random() * 1000)));
+        while (true) {
+            double t = pp.timeForNextEvent() * 60.0 * 1000.0;
+
+            try{
+                Thread.sleep((int)t);
+
+                String word = wordsDic[(int) (Math.random() * wordsDic.length)] + " " + InetAddress.getLocalHost();
+                MessageData value = new MessageData(word);
+
+                synchronized (messages){
+                    ClockWithIP key = new ClockWithIP(clock.tick(), InetAddress.getLocalHost().getAddress());
+                    messages.put(key, value);
+                }
+
+                for (InetAddress peer : peers) {
+                    Socket socket = new Socket(peer, 5000);
+                    PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                    out.println(clock.getClock() + " " + word);
+                    socket.close();
+                }
+
+            } catch (InterruptedException | IOException e) {
+                System.out.println("thread interrupted");
+                e.printStackTrace(System.out);
             }
         }
     }
