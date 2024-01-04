@@ -1,25 +1,26 @@
 package ds.chat;
 
 import ds.poisson.PoissonProcess;
+import org.javatuples.Pair;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.util.ArrayList;
-import java.util.Random;
-import java.util.Scanner;
+import java.util.*;
 
 public class WordGenerator implements Runnable{
 
     private final String[] words = new String[10000];
 
-    private final ArrayList<String> list;
+    private final TreeMap<Integer, Pair<String,Integer>> list;
 
     private final FileWriter file;
 
-    WordGenerator(ArrayList<String> list, FileWriter file) {
+    private final Lamport clock = new Lamport();
+
+    WordGenerator(TreeMap<Integer, Pair<String,Integer>> list, FileWriter file,Lamport clock) {
         try {
             this.file = file;
             this.list = list;
@@ -45,10 +46,13 @@ public class WordGenerator implements Runnable{
 
             try{
                 Thread.sleep((int)t);
+
+                String temp = words[(int) (Math.random() * words.length)] + " " + InetAddress.getLocalHost();
                 synchronized (list){
-                    list.add(words[(int) (Math.random() * words.length)] + " " + InetAddress.getLocalHost());
+                    list.put(clock.tick(), new Pair<>(temp,0));
                 }
-                file.write("\n" + list.get(list.size() - 1));
+
+                file.write("\n" + temp);
                 file.flush();
                 System.out.println("added word:" + words[(int) (Math.random() * words.length)] + "\n");
             } catch (InterruptedException | IOException e) {
