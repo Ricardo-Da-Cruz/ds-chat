@@ -7,8 +7,8 @@ public class Main {
     public static void main(String[] args) {
 
         InetAddress[] peers = new InetAddress[args.length];
-
         try {
+            System.out.println(InetAddress.getLocalHost().getAddress());
             for (int i = 0; i < args.length; i++) {
                 peers[i] = InetAddress.getByName(args[i]);
             }
@@ -16,7 +16,6 @@ public class Main {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-
 
     }
 }

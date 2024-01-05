@@ -116,7 +116,8 @@ public class Peer implements Runnable {
     }
 
     private void Connect(){
-        ArrayBlockingQueue<Socket> connections = new ArrayBlockingQueue<>(addresses.length - 1);
+        ArrayBlockingQueue<Socket> connections = new ArrayBlockingQueue<>(addresses.length);
+        System.out.println(connections.remainingCapacity());
 
         new Thread(() -> {
             try {
@@ -126,18 +127,28 @@ public class Peer implements Runnable {
                     Socket client = server.accept();
                     connections.add(client);
                     new Thread(new Connection(client)).start();
+
+                    System.out.println("Received connection from: " + client.getInetAddress() + " " + client.getPort());
+                    System.out.println(connections.remainingCapacity());
                 }
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }).start();
 
-        int i = 0;
         try {
-            while (addresses[i].equals(InetAddress.getLocalHost())){
-                connections.add(new Socket(addresses[i], 5000));
-                System.out.println("Connected to: " +  addresses[i].getHostAddress());
-                i++;
+            System.out.println("Connecting to peers");
+            System.out.println();
+
+            for (int i = 0;!Arrays.equals(Arrays.copyOfRange(addresses[i].getAddress(),1,4),Arrays.copyOfRange(InetAddress.getLocalHost().getAddress(),1,4));i++) {
+                System.out.println("Trying to connect to: " +  addresses[i].getHostAddress());
+                Socket socket = new Socket(addresses[i], 5000);
+                System.out.println("Connected to: " +  addresses[i].getHostAddress() + " " + socket.getLocalPort());
+
+                connections.add(socket);
+                new Thread(new Connection(socket)).start();
+
+                System.out.println("a:" + connections.remainingCapacity());
             }
         }catch (IOException e) {
             System.out.println("Error connecting");
