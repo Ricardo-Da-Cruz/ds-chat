@@ -1,0 +1,30 @@
+services:
+  myapp:
+    restart: always
+    container1:
+      image: chat
+      networks:
+        my_network:
+          ipv4_address: 172.20.0.2
+    container2:
+      image: chat
+      networks:
+        my_network:
+          ipv4_address: 172.20.0.3
+    container3:
+      image: chat
+      networks:
+        my_network:
+          ipv4_address: 172.20.0.4
+    container4:
+      image: chat
+      networks:
+        my_network:
+              ipv4_address: 172.20.0.5
+
+networks:
+  my_network:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16  # Change the subnet as needed

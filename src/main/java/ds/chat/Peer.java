@@ -7,6 +7,7 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
 
 
 public class Peer implements Runnable {
@@ -19,15 +20,17 @@ public class Peer implements Runnable {
     //The key is the clock value of the message
     private final TreeMap<ClockWithIP,MessageData> messages = new TreeMap<>();
 
-    private final ServerSocket server = new ServerSocket(5000);
-
-    private final InetAddress[] peers;
+    private ServerSocket server;
 
     private final FileWriter file;
+
+    private Socket[] sockets;
 
     private final Lamport clock = new Lamport();
 
     private final String[] wordsDic = new String[10000];
+
+    private final InetAddress[] addresses;
 
     class Connection implements Runnable {
         private final Socket socket;
@@ -46,8 +49,8 @@ public class Peer implements Runnable {
                 clock.receiveMessage(clockValue);
                 messages.get(key).addAck(clockValue);
 
-                if (messages.get(key).getAcks() == peers.length && messages.firstKey().equals(key)){
-                    while (messages.firstEntry().getValue().getAcks() == peers.length){
+                if (messages.get(key).getAcks() == sockets.length && messages.firstKey().equals(key)){
+                    while (messages.firstEntry().getValue().getAcks() == sockets.length){
                         file.write("\n" + messages.firstEntry().getValue().getMessage());
                         file.flush();
 
@@ -71,22 +74,82 @@ public class Peer implements Runnable {
             }
 
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-            out.println(clock.getClock() + " ACK " + clockValue);
-
+            synchronized (socket) {
+                out.println(clock.getClock() + " ACK " + clockValue);
+            }
         }
 
         public void run() {
-            try {
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                String[] message = in.readLine().split(" ");
+            while (!socket.isClosed()){
+                try {
+                    BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                    String[] message = in.readLine().split(" ");
 
-                if (message[1].equals("ACK")){
-                    handleACK(message);
-                } else {
-                    handleNewMessage(message);
+                    System.out.printf("received message: %s", String.join(" ",message));
+                    System.out.printf("from: %s", socket.getInetAddress());
+
+                    if (message[1].equals("ACK")){
+                        handleACK(message);
+                    } else {
+                        handleNewMessage(message);
+                    }
+
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
+            }
+        }
+    }
 
+    private void readFile(){
+        try {
+            Scanner wordsFile = new Scanner(new File("words.txt"));
+            int numWords = 0;
+            while (wordsFile.hasNext()) {
+                wordsDic[numWords] = wordsFile.nextLine();
+                numWords++;
+            }
+            System.out.printf("Loaded %d words.\n\n", numWords);
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void Connect(){
+        ArrayBlockingQueue<Socket> connections = new ArrayBlockingQueue<>(addresses.length - 1);
+
+        new Thread(() -> {
+            try {
+                System.out.println("Listening for connections");
+                server = new ServerSocket(5000);
+                while (connections.size() < addresses.length - 1){
+                    Socket client = server.accept();
+                    connections.add(client);
+                    new Thread(new Connection(client)).start();
+                }
             } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }).start();
+
+        int i = 0;
+        try {
+            while (addresses[i].equals(InetAddress.getLocalHost())){
+                connections.add(new Socket(addresses[i], 5000));
+                System.out.println("Connected to: " +  addresses[i].getHostAddress());
+                i++;
+            }
+        }catch (IOException e) {
+            System.out.println("Error connecting");
+            throw new RuntimeException(e);
+        }
+
+        sockets = new Socket[connections.size()];
+
+        for (int j = 0; j < sockets.length; j++){
+            try {
+                sockets[j] = connections.take();
+            } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
         }
@@ -95,35 +158,26 @@ public class Peer implements Runnable {
 
     Peer(InetAddress[] addresses) throws IOException {
         file = new FileWriter("log.txt");
-        peers = addresses;
-
-        new Thread(() -> {
-            while (true){
-                try {
-                    Socket client = server.accept();
-                    new Thread(new Connection(client)).start();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        }).start();
-        new Thread(this).start();
+        this.addresses = addresses;
     }
 
     @Override
     public void run() {
-        try {
-            Scanner wordsFile = new Scanner(new File("words.txt"));
-            int numWords = 0;
-            while (wordsFile.hasNext()) {
-                wordsDic[numWords] = wordsFile.nextLine();
-                numWords++;
-            }
+        System.out.println("reading files");
+        Thread fileReader = new Thread(this::readFile);
+        System.out.println("Starting Connections");
+        Thread Connector = new Thread(this::Connect);
 
-            System.out.println("Loaded " + numWords + " words.\n");
-        } catch (FileNotFoundException e) {
+        Connector.start();
+        fileReader.start();
+
+        try {
+            Connector.join();
+            fileReader.join();
+        } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+
 
         PoissonProcess pp = new PoissonProcess(4, new Random((int) (Math.random() * 1000)));
         while (true) {
@@ -135,16 +189,19 @@ public class Peer implements Runnable {
                 String word = wordsDic[(int) (Math.random() * wordsDic.length)] + " " + InetAddress.getLocalHost();
                 MessageData value = new MessageData(word);
 
+                int clockV;
+
                 synchronized (messages){
-                    ClockWithIP key = new ClockWithIP(clock.tick(), InetAddress.getLocalHost().getAddress());
+                    clockV = clock.tick();
+                    ClockWithIP key = new ClockWithIP(clockV, InetAddress.getLocalHost().getAddress());
                     messages.put(key, value);
                 }
 
-                for (InetAddress peer : peers) {
-                    Socket socket = new Socket(peer, 5000);
-                    PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-                    out.println(clock.getClock() + " " + word);
-                    socket.close();
+                for (Socket socket : sockets){
+                    synchronized (socket){
+                        PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                        out.println(clockV + " " + word);
+                    }
                 }
 
             } catch (InterruptedException | IOException e) {
